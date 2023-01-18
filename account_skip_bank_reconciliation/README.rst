@@ -23,7 +23,7 @@ Account Skip Bank Reconciliation
     :target: https://runbot.odoo-community.org/runbot/98/11.0
     :alt: Try me on Runbot
 
-|badge1| |badge2| |badge3| |badge4| |badge5| 
+|badge1| |badge2| |badge3| |badge4| |badge5|
 
 This module allows to exclude from bank statement reconciliation
 all journal items of a specific reconcilable account.
@@ -69,6 +69,8 @@ Contributors
 ~~~~~~~~~~~~
 
 * Miquel Raïch <miquel.raich@eficent.com>
+* Hugo Santos <hugo.santos@factorlibre.com>
+* Luis J. Salvatierra <luis.salvatierra@factorlibre.com>
 
 Maintainers
 ~~~~~~~~~~~

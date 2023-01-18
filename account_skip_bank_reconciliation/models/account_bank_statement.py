@@ -1,7 +1,9 @@
-# © 20118 Eficent Business and IT Consulting Services S.L. (www.eficent.com)
+# © 2018 Eficent Business and IT Consulting Services S.L. (www.eficent.com)
+# © 2022 FactorLibre - Hugo Santos <hugo.santos@factorlibre.com>
+# © 2023 FactorLibre - Luis J. Salvatierra <luis.salvatierra@factorlibre.com>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl.html).
 
-from odoo import models
+from odoo import models, api
 from odoo.osv import expression
 
 
@@ -22,3 +24,26 @@ class AccountBankStatementLine(models.Model):
             offset=offset, limit=limit, additional_domain=additional_domain,
             overlook_partner=overlook_partner)
         return am_lines
+
+    @api.multi
+    def get_reconciliation_proposition(self, excluded_ids=None):
+        ctx = self._context.copy()
+        ctx["exclude_bank_reconcile"] = True
+        return super(
+            AccountBankStatementLine, self.with_context(ctx)
+        ).get_reconciliation_proposition(excluded_ids=excluded_ids)
+
+    def _get_common_sql_query(
+        self, overlook_partner=False, excluded_ids=None, split=False
+    ):
+        query = super()._get_common_sql_query(
+            overlook_partner=overlook_partner, excluded_ids=excluded_ids, split=split
+        )
+        if self._context.get("exclude_bank_reconcile", False):
+            if split:
+                select_clause, from_clause, where_clause = query
+                where_clause += " AND acc.exclude_bank_reconcile = false"
+                query = (select_clause, from_clause, where_clause)
+            else:
+                query += " AND acc.exclude_bank_reconcile = false"
+        return query
