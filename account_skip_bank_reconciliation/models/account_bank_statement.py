@@ -40,10 +40,11 @@ class AccountBankStatementLine(models.Model):
             overlook_partner=overlook_partner, excluded_ids=excluded_ids, split=split
         )
         if self._context.get("exclude_bank_reconcile", False):
+            exclude_query = " AND acc.exclude_bank_reconcile IS NOT true"
             if split:
                 select_clause, from_clause, where_clause = query
-                where_clause += " AND acc.exclude_bank_reconcile = false"
+                where_clause += exclude_query
                 query = (select_clause, from_clause, where_clause)
             else:
-                query += " AND acc.exclude_bank_reconcile = false"
+                query += exclude_query
         return query
