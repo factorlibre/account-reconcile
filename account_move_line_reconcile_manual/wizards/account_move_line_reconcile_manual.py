@@ -211,8 +211,16 @@ class AccountMoveLineReconcileManual(models.TransientModel):
 
     def full_reconcile(self):
         self.ensure_one()
+        lines = self.move_line_ids
+        account = lines.mapped("account_id")[0]
         self.move_line_ids.remove_move_reconcile()
-        res = self.move_line_ids.reconcile()
+        ctx = self.env.context.copy()
+        if len(lines.currency_id) > 1:
+            if account.account_type == "liability_payable":
+                ctx["no_credit_currency"] = True
+            elif account.account_type == "asset_receivable":
+                ctx["no_debit_currency"] = True
+        res = lines.with_context(**ctx).reconcile()
         if not res.get("full_reconcile"):
             raise UserError(_("Full reconciliation failed. It should never happen!"))
         action = {
