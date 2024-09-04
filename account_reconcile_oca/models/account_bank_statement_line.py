@@ -187,8 +187,8 @@ class AccountBankStatementLine(models.Model):
 
     @api.onchange("add_account_move_line_id")
     def _onchange_add_account_move_line_id(self):
+        data = self.reconcile_data_info["data"]
         if self.add_account_move_line_id:
-            data = self.reconcile_data_info["data"]
             new_data = []
             is_new_line = True
             pending_amount = 0.0
@@ -213,6 +213,10 @@ class AccountBankStatementLine(models.Model):
             )
             self.can_reconcile = self.reconcile_data_info.get("can_reconcile", False)
             self.add_account_move_line_id = False
+        for line in data[::-1]:
+            if "reconcile_auxiliary" in line.get("reference", False):
+                self.manual_reference = line["reference"]
+                break
 
     def _recompute_suspense_line(self, data, reconcile_auxiliary_id, manual_reference):
         can_reconcile = True
