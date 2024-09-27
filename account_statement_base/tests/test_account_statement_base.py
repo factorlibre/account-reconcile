@@ -1,3 +1,4 @@
+from odoo import Command
 from odoo.tests import tagged
 
 from odoo.addons.account.tests.common import TestAccountReconciliationCommon
@@ -28,45 +29,23 @@ class TestReconciliationWidget(TestAccountReconciliationCommon):
         )
         cls.non_current_assets_account.reconcile = True
 
-    def test01_open_entries(self):
-        statement = self.acc_bank_stmt_model.create(
-            {
-                "name": "Test Bank Statement",
-            }
-        )
-        domain = [
-            "&",
-            ("parent_state", "=", "posted"),
-            ("statement_id", "=", statement.id),
-        ]
-        result = statement.open_entries()
-        self.assertTrue(result)
-        self.assertEqual(result.get("res_model"), "account.move.line")
-        self.assertEqual(result.get("context").get("search_default_group_by_move"), 1)
-        self.assertEqual(result.get("context").get("expand"), 1)
-        self.assertEqual(result.get("domain"), domain)
-
-    def test02_open_entries(self):
+    def test_01_test_open_entries(self):
         move = self.account_move_model.create(
             {
                 "line_ids": [
-                    (
-                        0,
-                        0,
+                    Command.create(
                         {
                             "account_id": self.current_assets_account.id,
                             "name": "DEMO",
                             "credit": 100,
-                        },
+                        }
                     ),
-                    (
-                        0,
-                        0,
+                    Command.create(
                         {
                             "account_id": self.non_current_assets_account.id,
                             "name": "DEMO",
                             "debit": 100,
-                        },
+                        }
                     ),
                 ]
             }
@@ -76,34 +55,36 @@ class TestReconciliationWidget(TestAccountReconciliationCommon):
             {
                 "name": "Test Bank Statement",
                 "line_ids": [
-                    (
-                        0,
-                        0,
+                    Command.create(
                         {
                             "date": "2024-01-01",
                             "amount": 100.0,
                             "payment_ref": move.name,
-                            "line_ids": [
-                                (4, move.line_ids[0].id),
-                            ],
-                        },
+                            "line_ids": [Command.set([move.line_ids[0].id])],
+                        }
                     ),
-                    (
-                        0,
-                        0,
+                    Command.create(
                         {
                             "date": "2024-01-01",
                             "amount": 100.0,
                             "payment_ref": move.name,
-                            "line_ids": [
-                                (4, move.line_ids[1].id),
-                            ],
-                        },
+                            "line_ids": [Command.set([move.line_ids[1].id])],
+                        }
                     ),
                 ],
             }
         )
+        domain = [
+            "&",
+            ("parent_state", "=", "posted"),
+            ("statement_id", "=", statement.id),
+        ]
         result = statement.open_entries()
         move_lines = self.env[result["res_model"]].search(result["domain"])
+        self.assertTrue(result)
+        self.assertEqual(result.get("res_model"), "account.move.line")
+        self.assertEqual(result.get("context").get("search_default_group_by_move"), 1)
+        self.assertEqual(result.get("context").get("expand"), 1)
+        self.assertEqual(result.get("domain"), domain)
         self.assertIn(statement.line_ids.line_ids[0], move_lines)
         self.assertIn(statement.line_ids.line_ids[1], move_lines)
