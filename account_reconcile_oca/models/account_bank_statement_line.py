@@ -631,8 +631,16 @@ class AccountBankStatementLine(models.Model):
                         reconciled_line.move_id.journal_id
                         == self.company_id.currency_exchange_journal_id
                     ):
+                        lines = reconciled_line.move_id.line_ids - reconciled_line
+                        target_line = lines.filtered(
+                            lambda l, rl=reconciled_line: l.debit == rl.credit
+                            and l.credit == rl.debit
+                            and l.account_id.id != rl.account_id.id
+                            and not l.matching_number
+                            and l.sequence == (rl.sequence + 1)
+                        )
                         reconcile_auxiliary_id, lines = self._get_reconcile_line(
-                            reconciled_line.move_id.line_ids - reconciled_line,
+                            target_line,
                             "other",
                             from_unreconcile=False,
                             move=True,
