@@ -447,9 +447,36 @@ class AccountBankStatementLine(models.Model):
             return
         self.partner_id = self.manual_partner_id
 
+    def _fields_to_check(self):
+        return ["account_id", "partner_id", "date", "name", "debit", "credit"]
+
+    def _check_recompute_reconcile_data(self):
+        self.ensure_one()
+        if self.reconcile_data:
+            for field in self._fields_to_check():
+                index = True if field in ["account_id", "partner_id"] else False
+                reconciled_data_field = self.reconcile_data.get("data", [{}])[0].get(
+                    field, False
+                )
+                if index:
+                    reconciled_data_field = reconciled_data_field[0]
+                move_line_id = self.reconcile_data.get("data", [{}])[0].get("id", False)
+                move_line = self.env["account.move.line"].browse(move_line_id) or False
+                if move_line:
+                    move_line_field = getattr(move_line, field, False)
+                    if index:
+                        move_line_field = move_line_field.id
+                    if field == "date":
+                        move_line_field = str(move_line_field)
+                if reconciled_data_field and reconciled_data_field != move_line_field:
+                    return True
+        return False
+
     @api.depends("reconcile_data", "is_reconciled")
     def _compute_reconcile_data_info(self):
         for record in self:
+            if record._check_recompute_reconcile_data():
+                record.reconcile_data = False
             if record.reconcile_data:
                 record.reconcile_data_info = record.reconcile_data
             else:
