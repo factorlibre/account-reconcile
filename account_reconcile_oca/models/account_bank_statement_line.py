@@ -337,6 +337,7 @@ class AccountBankStatementLine(models.Model):
                 or [False, False]
             )
             != line.get("partner_id")
+            or self.analytic_distribution != line.get("analytic_distribution", False)
         )
 
     def _get_manual_delete_vals(self):
@@ -582,7 +583,14 @@ class AccountBankStatementLine(models.Model):
             res = (
                 self.env["account.reconcile.model"]
                 .search(
-                    [("rule_type", "in", ["invoice_matching", "writeoff_suggestion"])]
+                    [
+                        (
+                            "rule_type",
+                            "in",
+                            ["invoice_matching", "writeoff_suggestion"],
+                        ),
+                        ("company_id", "=", self.company_id.id),
+                    ]
                 )
                 ._apply_rules(self, self._retrieve_partner())
             )
@@ -606,6 +614,8 @@ class AccountBankStatementLine(models.Model):
                     )
                     amount -= sum(line.get("amount") for line in line_data)
                     data += line_data
+                if res.get("auto_reconcile"):
+                    self.reconcile_bank_line()
                 return self._recompute_suspense_line(
                     data,
                     reconcile_auxiliary_id,
@@ -873,6 +883,7 @@ class AccountBankStatementLine(models.Model):
         models = self.env["account.reconcile.model"].search(
             [
                 ("rule_type", "in", ["invoice_matching", "writeoff_suggestion"]),
+                ("company_id", "in", result.company_id.ids),
                 ("auto_reconcile", "=", True),
             ]
         )
