@@ -472,6 +472,8 @@ class AccountBankStatementLine(models.Model):
     def _reconcile_data_by_model(self, data, reconcile_model, reconcile_auxiliary_id):
         new_data = []
         liquidity_amount = 0.0
+        currency = self._get_reconcile_currency()
+        currency_amount = False
         for line_data in data:
             if line_data["kind"] == "suspense":
                 continue
@@ -486,6 +488,13 @@ class AccountBankStatementLine(models.Model):
             if self.foreign_currency_id:
                 amount = self.foreign_currency_id.compute(
                     amount, self.journal_id.currency_id or self.company_currency_id
+                )
+            if currency != self.company_id.currency_id:
+                currency_amount = self.company_id.currency_id._convert(
+                    amount,
+                    currency,
+                    self.company_id,
+                    self.date,
                 )
             new_line.update(
                 {
@@ -502,9 +511,9 @@ class AccountBankStatementLine(models.Model):
                         .display_name,
                     ],
                     "date": fields.Date.to_string(self.date),
-                    "line_currency_id": self.company_id.currency_id.id,
+                    "line_currency_id": currency.id,
                     "currency_id": self.company_id.currency_id.id,
-                    "currency_amount": amount,
+                    "currency_amount": currency_amount or amount,
                     "name": line.get("name") or self.payment_ref,
                 }
             )
@@ -991,3 +1000,10 @@ class AccountBankStatementLine(models.Model):
             "split_line_id": self.id,
         }
         return action
+
+    def _get_reconcile_currency(self):
+        return (
+            self.foreign_currency_id
+            or self.journal_id.currency_id
+            or self.company_id.currency_id
+        )
