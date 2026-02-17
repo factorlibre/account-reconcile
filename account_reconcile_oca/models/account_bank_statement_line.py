@@ -198,6 +198,8 @@ class AccountBankStatementLine(models.Model):
                     self.reconcile_data_info["reconcile_auxiliary_id"],
                 ),
                 self.manual_reference,
+                self.reconcile_data_info.get("tolerance", 0),
+                self.reconcile_data_info.get("tolerance_account"),
             )
         else:
             # Refreshing data
@@ -252,10 +254,19 @@ class AccountBankStatementLine(models.Model):
             new_data,
             self.reconcile_data_info["reconcile_auxiliary_id"],
             self.manual_reference,
+            self.reconcile_data_info.get("tolerance", 0),
+            self.reconcile_data_info.get("tolerance_account"),
         )
         self.can_reconcile = self.reconcile_data_info.get("can_reconcile", False)
 
-    def _recompute_suspense_line(self, data, reconcile_auxiliary_id, manual_reference):
+    def _recompute_suspense_line(
+        self,
+        data,
+        reconcile_auxiliary_id,
+        manual_reference,
+        tolerance=0,
+        tolerance_account=False,
+    ):
         can_reconcile = True
         total_amount = 0
         currency_amount = 0
@@ -306,10 +317,10 @@ class AccountBankStatementLine(models.Model):
                         "credit": total_amount if total_amount > 0 else 0.0,
                         "debit": -total_amount if total_amount < 0 else 0.0,
                         "currency_amount": -currency_amount,
+                        "kind": "suspense",
                     }
                 )
             else:
-
                 suspense_line = {
                     "reference": "reconcile_auxiliary;%s" % reconcile_auxiliary_id,
                     "id": False,
@@ -328,6 +339,13 @@ class AccountBankStatementLine(models.Model):
                     "currency_amount": -currency_amount,
                 }
                 reconcile_auxiliary_id += 1
+            if tolerance and tolerance_account and abs(total_amount) <= tolerance:
+                tolerance_account_id = self.env["account.account"].browse(
+                    tolerance_account
+                )
+                suspense_line["account_id"] = tolerance_account_id.name_get()[0]
+                suspense_line["kind"] = "other"
+                can_reconcile = True
             new_data.append(suspense_line)
         return {
             "data": new_data,
@@ -335,6 +353,8 @@ class AccountBankStatementLine(models.Model):
             "reconcile_auxiliary_id": reconcile_auxiliary_id,
             "can_reconcile": can_reconcile,
             "manual_reference": manual_reference,
+            "tolerance": tolerance,
+            "tolerance_account": tolerance_account,
         }
 
     def _check_line_changed(self, line):
@@ -443,6 +463,8 @@ class AccountBankStatementLine(models.Model):
             new_data,
             self.reconcile_data_info["reconcile_auxiliary_id"],
             self.manual_reference,
+            self.reconcile_data_info.get("tolerance", 0),
+            self.reconcile_data_info.get("tolerance_account"),
         )
         self.can_reconcile = self.reconcile_data_info.get("can_reconcile", False)
 
@@ -543,6 +565,8 @@ class AccountBankStatementLine(models.Model):
             new_data,
             self.reconcile_data_info["reconcile_auxiliary_id"],
             self.manual_reference,
+            self.reconcile_data_info.get("tolerance", 0),
+            self.reconcile_data_info.get("tolerance_account"),
         )
         self.can_reconcile = self.reconcile_data_info.get("can_reconcile", False)
 
@@ -640,10 +664,28 @@ class AccountBankStatementLine(models.Model):
             new_data.append(new_line)
         return new_data, reconcile_auxiliary_id
 
+    def _get_tolerance_from_model(self, model, amls):
+        """Return (tolerance_amount, tolerance_account_id) from a reconcile model."""
+        if (
+            not model.allow_payment_tolerance
+            or model.payment_tolerance_param == 0
+            or not model.line_ids
+        ):
+            return 0, False
+        if model.payment_tolerance_type == "fixed_amount":
+            tolerance = model.payment_tolerance_param
+        else:  # percentage
+            amls_total = sum(abs(aml.amount_residual) for aml in amls)
+            tolerance = self.company_id.currency_id.round(
+                amls_total * model.payment_tolerance_param / 100.0
+            )
+        return tolerance, model.line_ids[0].account_id.id
+
     def _default_reconcile_data(self, from_unreconcile=False):
         liquidity_lines, suspense_lines, other_lines = self._seek_for_lines()
         data = []
         reconcile_auxiliary_id = 1
+        ret_data = {}
         for line in liquidity_lines:
             reconcile_auxiliary_id, lines = self._get_reconcile_line(
                 line,
@@ -667,26 +709,30 @@ class AccountBankStatementLine(models.Model):
                 )
                 ._apply_rules(self, self._retrieve_partner())
             )
-            if res and res.get("status", "") == "write_off":
-                return self._recompute_suspense_line(
-                    *self._reconcile_data_by_model(
-                        data, res["model"], reconcile_auxiliary_id
-                    ),
-                    self.manual_reference,
+            if res and res.get("amls"):
+                tolerance, tolerance_account = self._get_tolerance_from_model(
+                    res["model"], res["amls"]
                 )
-            elif res and res.get("amls"):
+                ret_data["tolerance"] = tolerance
+                ret_data["tolerance_account"] = tolerance_account
                 amount = self.amount_total_signed
                 for line in res.get("amls", []):
-                    max_amount = amount
-                    if (
-                        line.currency_id == self._get_reconcile_currency()
-                        and self.amount_currency
-                        and self.amount_total_signed
-                    ):
-                        # convert max amount with rate of statement, not Odoo's rate
-                        max_amount = line.currency_id.round(
-                            max_amount * self.amount_currency / self.amount_total_signed
-                        )
+                    if tolerance:
+                        # When tolerance applies, use full residual amount
+                        # so the difference flows to the tolerance account
+                        max_amount = False
+                    else:
+                        max_amount = amount
+                        if (
+                            line.currency_id == self._get_reconcile_currency()
+                            and self.amount_currency
+                            and self.amount_total_signed
+                        ):
+                            max_amount = line.currency_id.round(
+                                max_amount
+                                * self.amount_currency
+                                / self.amount_total_signed
+                            )
                     reconcile_auxiliary_id, line_data = self._get_reconcile_line(
                         line,
                         "other",
@@ -699,11 +745,26 @@ class AccountBankStatementLine(models.Model):
                     data += line_data
                 if res.get("auto_reconcile") and self.reconcile_data_info:
                     self.reconcile_bank_line()
-                return self._recompute_suspense_line(
-                    data,
-                    reconcile_auxiliary_id,
-                    self.manual_reference,
+                ret_data.update(
+                    self._recompute_suspense_line(
+                        data,
+                        reconcile_auxiliary_id,
+                        self.manual_reference,
+                        tolerance=tolerance,
+                        tolerance_account=tolerance_account,
+                    )
                 )
+                return ret_data
+            elif res and res.get("status", "") == "write_off":
+                ret_data.update(
+                    self._recompute_suspense_line(
+                        *self._reconcile_data_by_model(
+                            data, res["model"], reconcile_auxiliary_id
+                        ),
+                        self.manual_reference,
+                    )
+                )
+                return ret_data
         for line in other_lines:
             partial_lines = self._all_partials_lines(line) if from_unreconcile else []
             if partial_lines:
@@ -769,11 +830,14 @@ class AccountBankStatementLine(models.Model):
                 )
                 data += lines
 
-        return self._recompute_suspense_line(
-            data,
-            reconcile_auxiliary_id,
-            self.manual_reference,
+        ret_data.update(
+            self._recompute_suspense_line(
+                data,
+                reconcile_auxiliary_id,
+                self.manual_reference,
+            )
         )
+        return ret_data
 
     def _all_partials_lines(self, lines):
         reconciliation_lines = lines.filtered(
@@ -1009,24 +1073,34 @@ class AccountBankStatementLine(models.Model):
                 )
                 data += lines
             reconcile_auxiliary_id = 1
-            if res.get("status", "") == "write_off":
-                data = record._recompute_suspense_line(
-                    *record._reconcile_data_by_model(
-                        data, res["model"], reconcile_auxiliary_id
-                    ),
-                    self.manual_reference,
+            if res.get("amls"):
+                tolerance, tolerance_account = record._get_tolerance_from_model(
+                    res["model"], res["amls"]
                 )
-            elif res.get("amls"):
                 amount = self.amount_currency or self.amount
                 for line in res.get("amls", []):
+                    max_amount = False if tolerance else amount
                     reconcile_auxiliary_id, line_datas = record._get_reconcile_line(
-                        line, "other", is_counterpart=True, max_amount=amount, move=True
+                        line,
+                        "other",
+                        is_counterpart=True,
+                        max_amount=max_amount,
+                        move=True,
                     )
                     amount -= sum(line_data.get("amount") for line_data in line_datas)
                     data += line_datas
                 data = record._recompute_suspense_line(
                     data,
                     reconcile_auxiliary_id,
+                    self.manual_reference,
+                    tolerance=tolerance,
+                    tolerance_account=tolerance_account,
+                )
+            elif res.get("status", "") == "write_off":
+                data = record._recompute_suspense_line(
+                    *record._reconcile_data_by_model(
+                        data, res["model"], reconcile_auxiliary_id
+                    ),
                     self.manual_reference,
                 )
             if not data.get("can_reconcile"):

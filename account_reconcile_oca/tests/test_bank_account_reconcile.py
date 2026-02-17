@@ -1557,3 +1557,238 @@ class TestReconciliationWidget(TestAccountReconciliationCommon):
             reconciled_exchange_line.balance,
             "Proposed reconciliation does not match auto reconciliation",
         )
+
+    def test_01_invoice_matching_tolerance_percentage(self):
+        """Invoice matching with percentage tolerance within range.
+
+        Invoice 1000, payment 985 (1.5% diff), tolerance 5% -> can_reconcile.
+        """
+        self.env["account.reconcile.model"].search([]).unlink()
+        self.env["account.reconcile.model"].create(
+            {
+                "name": "Invoice matching with tolerance",
+                "rule_type": "invoice_matching",
+                "auto_reconcile": False,
+                "match_partner": True,
+                "allow_payment_tolerance": True,
+                "payment_tolerance_type": "percentage",
+                "payment_tolerance_param": 5.0,
+                "line_ids": [(0, 0, {"account_id": self.current_assets_account.id})],
+            }
+        )
+        inv = self.create_invoice(
+            currency_id=self.currency_euro_id, invoice_amount=1000
+        )
+        bank_stmt = self.acc_bank_stmt_model.create(
+            {
+                "journal_id": self.bank_journal_euro.id,
+                "date": time.strftime("%Y-07-15"),
+                "name": "test",
+            }
+        )
+        bank_stmt_line = self.acc_bank_stmt_line_model.create(
+            {
+                "name": "testLine",
+                "partner_id": inv.partner_id.id,
+                "journal_id": self.bank_journal_euro.id,
+                "statement_id": bank_stmt.id,
+                "amount": 985,
+                "date": time.strftime("%Y-07-15"),
+            }
+        )
+        self.assertTrue(
+            bank_stmt_line.can_reconcile,
+            "Should be reconcilable: 1.5% diff within 5% tolerance",
+        )
+        # Verify the write-off line uses the tolerance account
+        data = bank_stmt_line.reconcile_data_info["data"]
+        wo_line = [line for line in data if line.get("kind") == "suspense"]
+        self.assertTrue(wo_line, "Should have a suspense/write-off line")
+        self.assertEqual(
+            wo_line[0]["account_id"][0],
+            self.current_assets_account.id,
+            "Write-off line should use tolerance account",
+        )
+
+    def test_02_invoice_matching_tolerance_percentage_exceeded(self):
+        """Invoice matching with percentage tolerance exceeded.
+
+        Invoice 1000, payment 900 (10% diff), tolerance 5% -> no match.
+        """
+        self.env["account.reconcile.model"].search([]).unlink()
+        self.env["account.reconcile.model"].create(
+            {
+                "name": "Invoice matching with tolerance",
+                "rule_type": "invoice_matching",
+                "auto_reconcile": False,
+                "match_partner": True,
+                "allow_payment_tolerance": True,
+                "payment_tolerance_type": "percentage",
+                "payment_tolerance_param": 5.0,
+                "line_ids": [(0, 0, {"account_id": self.current_assets_account.id})],
+            }
+        )
+        inv = self.create_invoice(
+            currency_id=self.currency_euro_id, invoice_amount=1000
+        )
+        bank_stmt = self.acc_bank_stmt_model.create(
+            {
+                "journal_id": self.bank_journal_euro.id,
+                "date": time.strftime("%Y-07-15"),
+                "name": "test",
+            }
+        )
+        bank_stmt_line = self.acc_bank_stmt_line_model.create(
+            {
+                "name": "testLine",
+                "partner_id": inv.partner_id.id,
+                "journal_id": self.bank_journal_euro.id,
+                "statement_id": bank_stmt.id,
+                "amount": 900,
+                "date": time.strftime("%Y-07-15"),
+            }
+        )
+        self.assertFalse(
+            bank_stmt_line.can_reconcile,
+            "Should NOT be reconcilable: 10% diff exceeds 5% tolerance",
+        )
+
+    def test_03_invoice_matching_tolerance_fixed_amount(self):
+        """Invoice matching with fixed amount tolerance within range.
+
+        Invoice 1000, payment 995 (5 diff), tolerance 10 fixed -> can_reconcile.
+        """
+        self.env["account.reconcile.model"].search([]).unlink()
+        self.env["account.reconcile.model"].create(
+            {
+                "name": "Invoice matching with fixed tolerance",
+                "rule_type": "invoice_matching",
+                "auto_reconcile": False,
+                "match_partner": True,
+                "allow_payment_tolerance": True,
+                "payment_tolerance_type": "fixed_amount",
+                "payment_tolerance_param": 10.0,
+                "line_ids": [(0, 0, {"account_id": self.current_assets_account.id})],
+            }
+        )
+        inv = self.create_invoice(
+            currency_id=self.currency_euro_id, invoice_amount=1000
+        )
+        bank_stmt = self.acc_bank_stmt_model.create(
+            {
+                "journal_id": self.bank_journal_euro.id,
+                "date": time.strftime("%Y-07-15"),
+                "name": "test",
+            }
+        )
+        bank_stmt_line = self.acc_bank_stmt_line_model.create(
+            {
+                "name": "testLine",
+                "partner_id": inv.partner_id.id,
+                "journal_id": self.bank_journal_euro.id,
+                "statement_id": bank_stmt.id,
+                "amount": 995,
+                "date": time.strftime("%Y-07-15"),
+            }
+        )
+        self.assertTrue(
+            bank_stmt_line.can_reconcile,
+            "Should be reconcilable: 5 diff within 10 fixed tolerance",
+        )
+        data = bank_stmt_line.reconcile_data_info["data"]
+        wo_line = [line for line in data if line.get("kind") == "suspense"]
+        self.assertTrue(wo_line, "Should have a suspense/write-off line")
+        self.assertEqual(
+            wo_line[0]["account_id"][0],
+            self.current_assets_account.id,
+            "Write-off line should use tolerance account",
+        )
+
+    def test_04_invoice_matching_tolerance_auto_reconcile(self):
+        """Invoice matching with tolerance and auto_reconcile.
+
+        Invoice 1000, payment 985 (1.5% diff), tolerance 5%, auto_reconcile
+        -> automatically reconciled.
+        """
+        self.env["account.reconcile.model"].search([]).unlink()
+        self.env["account.reconcile.model"].create(
+            {
+                "name": "Invoice matching auto tolerance",
+                "rule_type": "invoice_matching",
+                "auto_reconcile": True,
+                "match_partner": True,
+                "allow_payment_tolerance": True,
+                "payment_tolerance_type": "percentage",
+                "payment_tolerance_param": 5.0,
+                "line_ids": [(0, 0, {"account_id": self.current_assets_account.id})],
+            }
+        )
+        inv = self.create_invoice(
+            currency_id=self.currency_euro_id, invoice_amount=1000
+        )
+        bank_stmt = self.acc_bank_stmt_model.create(
+            {
+                "journal_id": self.bank_journal_euro.id,
+                "date": time.strftime("%Y-07-15"),
+                "name": "test",
+            }
+        )
+        bank_stmt_line = self.acc_bank_stmt_line_model.create(
+            {
+                "name": "testLine",
+                "partner_id": inv.partner_id.id,
+                "journal_id": self.bank_journal_euro.id,
+                "statement_id": bank_stmt.id,
+                "amount": 985,
+                "date": time.strftime("%Y-07-15"),
+            }
+        )
+        self.assertTrue(
+            bank_stmt_line.is_reconciled,
+            "Should be auto-reconciled with tolerance",
+        )
+
+    def test_05_writeoff_suggestion_still_works(self):
+        """Writeoff suggestion model still works after branch reorder.
+
+        Non-regression test: writeoff_suggestion with auto_reconcile should
+        still create the correct write-off and reconcile.
+        """
+        self.env["account.reconcile.model"].search([]).unlink()
+        self.env["account.reconcile.model"].create(
+            {
+                "name": "Writeoff suggestion model",
+                "rule_type": "writeoff_suggestion",
+                "match_label": "contains",
+                "match_label_param": "TOLERANCE_WO_TEST",
+                "auto_reconcile": True,
+                "line_ids": [(0, 0, {"account_id": self.current_assets_account.id})],
+            }
+        )
+        bank_stmt = self.acc_bank_stmt_model.create(
+            {
+                "journal_id": self.bank_journal_euro.id,
+                "date": time.strftime("%Y-07-15"),
+                "name": "test",
+            }
+        )
+        bank_stmt_line = self.acc_bank_stmt_line_model.create(
+            {
+                "name": "TOLERANCE_WO_TEST",
+                "payment_ref": "TOLERANCE_WO_TEST",
+                "journal_id": self.bank_journal_euro.id,
+                "statement_id": bank_stmt.id,
+                "amount": 100,
+                "date": time.strftime("%Y-07-15"),
+            }
+        )
+        self.assertTrue(
+            bank_stmt_line.is_reconciled,
+            "Writeoff suggestion with auto_reconcile should still work",
+        )
+        self.assertTrue(
+            bank_stmt_line.move_id.line_ids.filtered(
+                lambda r: r.account_id == self.current_assets_account
+            ),
+            "Should have a line with the writeoff account",
+        )
